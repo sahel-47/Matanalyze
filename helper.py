@@ -2,12 +2,7 @@ import numpy as np
 
 
 def save_as_mtx(array, filename):
-    """Converts a 2D array to Matrix Market format and saves it to a file.
-
-    Args:
-        array (list): The 2D array to be converted.
-        filename (str): The name of the output file (including '.mtx' extension).
-    """
+    #Converts a 2D array to Matrix Market format and saves it to a file.
 
     rows, cols = len(array), len(array[0])  # Get dimensions
     nnz = 0  # Count non-zero elements (optional for MM format)
@@ -37,22 +32,17 @@ def generate_dense_matrix_with_sparsity(rows, cols, p_zero=0.0):
     """
     Generates a dense matrix with a specified percentage of zeros.
 
-    Args:
-        rows (int): The number of rows in the matrix.
-        cols (int): The number of columns in the matrix.
-        p_zero (float, optional): The percentage of zeros in the matrix. Defaults to 0.0.
-
     Returns:
-        numpy.ndarray: A dense matrix with the specified dimensions and percentage of zeros.
+       A dense matrix with the specified dimensions and percentage of zeros.
     """
 
     if p_zero < 0 or p_zero > 1:
         raise ValueError("p_zero must be between 0 and 1")
 
-    # Calculate the exact number of zeros based on percentage
+
     num_zeros = int(rows * cols * p_zero)
 
-    # Generate a dense matrix with non-zero values
+
     dense_matrix = np.random.randint(1.0, 100.0, size=(rows, cols),dtype=np.int32) #remove int32
 
     # Randomly set the desired number of elements to zero
