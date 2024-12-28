@@ -1,0 +1,125 @@
+#include <hls_stream.h>
+#include <ap_int.h>
+
+#define M {{M}}
+#define K {{K}}
+#define N {{N}}
+#define NNZ {{NNZ}}
+#define MULTIPLIERS {{MULTIPLIERS}}
+#define ROW_CHUNK_LOAD_SIZE {{ROW_CHUNK_LOAD_SIZE}}
+#define OUTPUT_CHUNK_SIZE {{OUTPUT_CHUNK_SIZE}}
+
+typedef int DTYPE;
+
+
+void row_loader(DTYPE B[K][N], hls::stream<DTYPE> &row_stream, int colIdx[NNZ], int start_row) {
+    #pragma HLS INLINE OFF
+    for (int i = 0; i < ROW_CHUNK_LOAD_SIZE; i++) {
+//        #pragma HLS PIPELINE II=1
+        for (int j = 0; j < N; j++) {
+            row_stream.write(B[colIdx[start_row + i]][j]);
+        }
+    }
+}
+
+void row_onchip(DTYPE BOnchip[ROW_CHUNK_LOAD_SIZE][N], hls::stream<DTYPE> &row_stream) {
+    #pragma HLS INLINE OFF
+    for (int i = 0; i < ROW_CHUNK_LOAD_SIZE; i++) {
+//        #pragma HLS PIPELINE II=1
+        for (int j = 0; j < N; j++) {
+            BOnchip[i][j] = row_stream.read();
+        }
+    }
+}
+
+void off_load(DTYPE outOnchip[OUTPUT_CHUNK_SIZE][N], hls::stream<DTYPE> &off_stream) {
+    #pragma HLS INLINE OFF
+    for (int i = 0; i < OUTPUT_CHUNK_SIZE; i++) {
+//        #pragma HLS PIPELINE II=1
+        for (int j = 0; j < N; j++) {
+            off_stream.write(outOnchip[i][j]);
+        }
+    }
+}
+
+void out_matrix(hls::stream<DTYPE> &off_stream, DTYPE outMatrix[M][N], int out_row) {
+    #pragma HLS INLINE OFF
+    for (int i = 0; i < OUTPUT_CHUNK_SIZE; i++) {
+//        #pragma HLS PIPELINE II=1
+        for (int j = 0; j < N; j++) {
+            outMatrix[out_row + i][j] = off_stream.read();
+        }
+    }
+}
+
+void rowAlgo(DTYPE valA[NNZ], int rowIdx[NNZ], int colIdx[NNZ], DTYPE B[K][N], DTYPE outMatrix[M][N]) {
+    #pragma HLS INTERFACE m_axi port=B offset=slave bundle=gmem
+    #pragma HLS INTERFACE m_axi port=outMatrix offset=slave bundle=gmem
+    #pragma HLS INTERFACE s_axilite port=return bundle=control
+    #pragma HLS INTERFACE s_axilite port=B bundle=control
+    #pragma HLS INTERFACE s_axilite port=outMatrix bundle=control
+
+    hls::stream<DTYPE> row_stream;
+    hls::stream<DTYPE> off_stream;
+    #pragma HLS STREAM variable=row_stream depth=N * ROW_CHUNK_LOAD_SIZE
+    #pragma HLS STREAM variable=off_stream depth=N * OUTPUT_CHUNK_SIZE
+
+    int sum[N] = {0};
+    int start_row = 0;
+    int out_row = 0;
+    DTYPE BOnchip[ROW_CHUNK_LOAD_SIZE][N];
+    DTYPE outOnchip[ROW_CHUNK_LOAD_SIZE][N];
+    int row_count = 0;
+    int counter = 0;
+    int mod;
+    int mod2;
+
+    #pragma HLS ARRAY_PARTITION variable=sum type=cyclic factor= {{PARTITION_FACTOR}}
+    #pragma HLS ARRAY_PARTITION variable=valA type=cyclic factor= 3
+	#pragma HLS ARRAY_PARTITION variable=colIdx type=cyclic factor = 3
+	#pragma HLS ARRAY_PARTITION variable=rowIdx type=cyclic factor = 3
+    #pragma HLS ARRAY_PARTITION variable=BOnchip type=cyclic dim=2 factor= {{PARTITION_FACTOR}}
+    #pragma HLS ARRAY_PARTITION variable=outOnchip type=cyclic dim=2 factor= {{PARTITION_FACTOR}}
+
+    for (int i = 0; i < NNZ; i++) {
+		//#pragma HLS PIPELINE II=1
+        if (counter % ROW_CHUNK_LOAD_SIZE == 0) {
+//            #pragma HLS DATAFLOW
+            row_loader(B, row_stream, colIdx, start_row);
+            row_onchip(BOnchip, row_stream);
+            start_row += ROW_CHUNK_LOAD_SIZE;
+        }
+        mod = i % ROW_CHUNK_LOAD_SIZE;
+        for (int j = 0; j < N; j += MULTIPLIERS) {
+            #pragma HLS PIPELINE II=1
+            for (int k = 0; k < MULTIPLIERS; k++) {
+                #pragma HLS UNROLL factor=MULTIPLIERS
+                if(j+k < N){
+            		sum[j + k] += valA[i] * BOnchip[mod][j + k];
+            	}
+            }
+        }
+
+        if (i == NNZ - 1 || rowIdx[i] != rowIdx[i + 1]) {
+            mod2 = row_count % ROW_CHUNK_LOAD_SIZE;
+
+            for (int j = 0; j < N; j += MULTIPLIERS) {
+                #pragma HLS PIPELINE II=1
+                for (int k = 0; k < MULTIPLIERS; k++) {
+                    #pragma HLS UNROLL factor=MULTIPLIERS
+                    outOnchip[mod2][j + k] = sum[j + k];
+                    sum[j + k] = 0;
+                }
+            }
+            row_count++;
+        }
+
+        if (row_count % OUTPUT_CHUNK_SIZE == 0 && row_count != 0) {
+            off_load(outOnchip, off_stream);
+            out_matrix(off_stream, outMatrix, out_row);
+            out_row += OUTPUT_CHUNK_SIZE;
+        }
+    }
+}
+
+
